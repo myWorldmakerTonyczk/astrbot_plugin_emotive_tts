@@ -1,0 +1,6 @@
+-r requirements.txt
+astrbot==4.29.4
+python-dotenv
+pytest
+pytest-asyncio
+ruff

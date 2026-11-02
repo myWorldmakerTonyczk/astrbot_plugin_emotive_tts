@@ -1,0 +1,274 @@
+{
+  "enabled": {
+    "description": "启用插件",
+    "type": "bool",
+    "default": true,
+    "hint": ""
+  },
+  "auto_reply_voice": {
+    "description": "自动将模型回复转成语音",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后仍可由LLM调用语音工具。工具已成功发送时，不会再自动朗读本次最终回复。"
+  },
+  "tool_enabled": {
+    "description": "允许LLM调用发送语音工具",
+    "type": "bool",
+    "default": true,
+    "hint": "提供emotive_send_voice：auto结合上下文分析语气，manual直接传instruction。仍遵守私聊/群聊开关和白名单；可在AstrBot工具管理中关闭工具展示。"
+  },
+  "tts_mode": {
+    "description": "语音API",
+    "type": "string",
+    "default": "阿里云",
+    "options": [
+      "阿里云",
+      "自定义兼容接口"
+    ],
+    "hint": "先选语音服务类型，面板只显示该类型需要的连接配置。"
+  },
+  "api_key": {
+    "description": "语音API Key",
+    "type": "string",
+    "default": "",
+    "hint": "阿里模式填百炼Key；自定义模式填兼容服务Key，或通过额外请求头提供鉴权。",
+    "secret": true
+  },
+  "aliyun_region": {
+    "description": "阿里云地区",
+    "type": "string",
+    "default": "北京",
+    "options": [
+      "北京",
+      "新加坡（国际）"
+    ],
+    "hint": "cosyvoice-v3.5-plus请用北京；Key、模型和音色须属于同一地域。",
+    "condition": {
+      "tts_mode": "阿里云"
+    }
+  },
+  "aliyun_workspace": {
+    "description": "阿里业务空间ID（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "普通调用留空即可。",
+    "condition": {
+      "tts_mode": "阿里云"
+    },
+    "collapsed": true
+  },
+  "tts_endpoint": {
+    "description": "自定义接口完整URL",
+    "type": "string",
+    "default": "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer",
+    "hint": "仅自定义模式使用。服务须兼容阿里TTS请求体，并返回output.audio.url。",
+    "condition": {
+      "tts_mode": "自定义兼容接口"
+    }
+  },
+  "tts_headers": {
+    "description": "自定义请求头（JSON）",
+    "type": "text",
+    "default": "{}",
+    "hint": "例如 {\"Authorization\":\"Bearer ...\"}；只影响自定义接口，切回阿里时不会发送。",
+    "condition": {
+      "tts_mode": "自定义兼容接口"
+    }
+  },
+  "tts_model": {
+    "description": "语音模型ID",
+    "type": "string",
+    "default": "cosyvoice-v3.5-plus",
+    "hint": "首版使用支持自然语言instruction的模型和匹配音色。"
+  },
+  "voice": {
+    "description": "语音音色ID",
+    "type": "string",
+    "default": "",
+    "hint": "必须填写与模型、地域匹配的复刻或设计音色。"
+  },
+  "speech_rate": {
+    "description": "语速",
+    "type": "float",
+    "default": 1.12,
+    "hint": "试听选定默认值；阿里接口有效范围以模型为准。"
+  },
+  "auto_emotion": {
+    "description": "根据上下文生成语气",
+    "type": "bool",
+    "default": true,
+    "hint": ""
+  },
+  "context_messages": {
+    "description": "历史消息条数",
+    "type": "int",
+    "default": 5,
+    "hint": "0至50；5是5条，不是5轮；当前输入和当前回复另传。"
+  },
+  "voice_style": {
+    "description": "固定声音风格",
+    "type": "text",
+    "default": "自然灵动，保持音色一致，避免播音腔和刻意卖萌。",
+    "hint": ""
+  },
+  "fallback_instruction": {
+    "description": "默认语气指令",
+    "type": "text",
+    "default": "用普通话，自然聊天，语气贴合内容，情绪克制，停顿短。",
+    "hint": "自动分析失败或关闭时使用；最多100加权字符。"
+  },
+  "analysis_mode": {
+    "description": "语气判断模型（与语音API分开）",
+    "type": "string",
+    "default": "使用AstrBot模型",
+    "hint": "只负责把上下文转成instruction，不负责生成声音。",
+    "options": [
+      "使用AstrBot模型",
+      "自定义分析接口"
+    ]
+  },
+  "analysis_provider_id": {
+    "description": "AstrBot分析模型提供商ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用当前会话模型；不会重写正常聊天回复。",
+    "condition": {
+      "analysis_mode": "使用AstrBot模型"
+    }
+  },
+  "analysis_endpoint": {
+    "description": "外部分析完整URL",
+    "type": "string",
+    "default": "",
+    "hint": "例如https://服务域名/v1/chat/completions；仅external模式使用。",
+    "condition": {
+      "analysis_mode": "自定义分析接口"
+    }
+  },
+  "analysis_model": {
+    "description": "外部分析模型名称",
+    "type": "string",
+    "default": "",
+    "hint": "",
+    "condition": {
+      "analysis_mode": "自定义分析接口"
+    }
+  },
+  "analysis_api_key": {
+    "description": "外部分析API Key",
+    "type": "string",
+    "default": "",
+    "hint": "",
+    "condition": {
+      "analysis_mode": "自定义分析接口"
+    },
+    "secret": true
+  },
+  "analysis_headers": {
+    "description": "分析额外请求头JSON",
+    "type": "text",
+    "default": "{}",
+    "hint": "",
+    "condition": {
+      "analysis_mode": "自定义分析接口"
+    }
+  },
+  "context_max_chars": {
+    "description": "历史总字符上限",
+    "type": "int",
+    "default": 4000,
+    "hint": "",
+    "collapsed": true
+  },
+  "include_persona": {
+    "description": "分析时附带有限角色背景",
+    "type": "bool",
+    "default": true,
+    "hint": "最多1500字符，外部分析模式会将此信息发给所配服务。",
+    "collapsed": true
+  },
+  "analysis_timeout": {
+    "description": "分析超时秒",
+    "type": "int",
+    "default": 12,
+    "hint": "",
+    "collapsed": true
+  },
+  "tts_timeout": {
+    "description": "合成与下载总超时秒",
+    "type": "int",
+    "default": 30,
+    "hint": "",
+    "collapsed": true
+  },
+  "job_timeout": {
+    "description": "含排队的任务总超时秒",
+    "type": "int",
+    "default": 75,
+    "hint": "",
+    "collapsed": true
+  },
+  "max_text_chars": {
+    "description": "单次朗读字符上限",
+    "type": "int",
+    "default": 600,
+    "hint": "超限保留文字，不强行分句。"
+  },
+  "private_enabled": {
+    "description": "私聊启用",
+    "type": "bool",
+    "default": true,
+    "hint": ""
+  },
+  "group_enabled": {
+    "description": "群聊启用",
+    "type": "bool",
+    "default": true,
+    "hint": ""
+  },
+  "umo_whitelist": {
+    "description": "会话UMO白名单",
+    "type": "list",
+    "default": [],
+    "hint": "留空允许所有会话；填/sid返回的完整UMO。"
+  },
+  "trigger_probability": {
+    "description": "语音触发概率",
+    "type": "float",
+    "default": 1.0,
+    "hint": "0至1。"
+  },
+  "send_text_with_voice": {
+    "description": "语音后仍发送原文字",
+    "type": "bool",
+    "default": true,
+    "hint": "语音失败始终保留原文字。"
+  },
+  "concurrency": {
+    "description": "并发合成任务数",
+    "type": "int",
+    "default": 2,
+    "hint": "",
+    "collapsed": true
+  },
+  "queue_capacity": {
+    "description": "最大等待及运行任务数",
+    "type": "int",
+    "default": 16,
+    "hint": "",
+    "collapsed": true
+  },
+  "audio_ttl_seconds": {
+    "description": "临时音频保留秒",
+    "type": "int",
+    "default": 3600,
+    "hint": "最少300秒，便于平台读取文件。",
+    "collapsed": true
+  },
+  "config_revision": {
+    "type": "int",
+    "description": "配置版本（自动维护）",
+    "default": 0,
+    "invisible": true
+  }
+}
