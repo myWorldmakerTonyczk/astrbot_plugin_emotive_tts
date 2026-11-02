@@ -4,8 +4,9 @@ from types import SimpleNamespace
 import astrbot.api.message_components as Comp
 import pytest
 from plugin_under_test.main import EmotiveTTS
-from plugin_under_test.src.plugin import DONE, SNAPSHOT, TOOL_BUSY, TOOL_SENT
+from plugin_under_test.src.events import DONE, SNAPSHOT, TOOL_BUSY, TOOL_SENT
 from plugin_under_test.src.queue_manager import WorkGate
+from plugin_under_test.src.tools.tool import _send_voice
 
 
 class Event:
@@ -46,6 +47,7 @@ class Event:
 @pytest.fixture
 def plugin(tmp_path):
     obj = object.__new__(EmotiveTTS)
+    obj.context = SimpleNamespace()
     obj.config = {"send_text_with_voice": False, "auto_emotion": False}
     obj.closing, obj.cleaner = False, None
     obj.jobs, obj.gate, obj.data_dir = set(), WorkGate(), tmp_path
@@ -173,10 +175,11 @@ async def test_tool_manual_bypasses_analysis_and_automatic_repeat(plugin):
     plugin.instruction = forbidden
     plugin.http.synthesize = synth
     event = Event()
-    result = await plugin.send_voice(event, "**你好呀**", "manual", "先俏皮，再温柔。")
+    result = await plugin.send_voice_manual(event, "**你好呀**", "先俏皮，再温柔。")
     assert "成功" in result and calls == [("你好呀", "先俏皮，再温柔。")]
     assert event.get_extra(TOOL_SENT) and not event.get_extra(TOOL_BUSY)
-    await plugin.send_voice(event, "不应再发", "manual", "温柔。")
+    await plugin.send_voice_manual(event, "不应再发", "温柔。")
+    await plugin.send_voice_auto(event, "也不能再用自动工具发送")
     await plugin.decorate(event)
     assert len(event.sent) == 1 and event.result.chain and not plugin.jobs
 
@@ -204,8 +207,9 @@ async def test_tool_auto_uses_bounded_snapshot_even_when_auto_emotion_off(plugin
         system_prompt="角色",
     )
     await plugin.capture(event, req)
-    assert "成功" in await plugin.send_voice(event, "那你明天还来吗？")
-    assert [x["content"] for x in payloads[0]["history"]] == ["上一条", "最近"]
+    assert "成功" in await plugin.send_voice_auto(event, "那你明天还来吗？")
+    # Tool default is five, independently of the automatic reply's configured two.
+    assert [x["content"] for x in payloads[0]["history"]] == ["最早", "上一条", "最近"]
     assert payloads[0]["current_user"] == "用户本次输入"
     assert payloads[0]["reply"] == "那你明天还来吗？"
     assert voices == ["先低落，再带一点期待。"]
@@ -227,7 +231,7 @@ async def test_tool_auto_uses_bounded_snapshot_even_when_auto_emotion_off(plugin
 )
 async def test_tool_rejects_bad_parameters(plugin, text, mode, instruction):
     event = Event()
-    result = await plugin.send_voice(event, text, mode, instruction)
+    result = await _send_voice(plugin, event, text, mode, instruction)
     assert "未发送" in result and not event.sent and not plugin.jobs
 
 
@@ -242,7 +246,7 @@ async def test_tool_permissions_and_auto_switch(plugin):
         before = dict(plugin.config)
         plugin.config.update(config)
         event = Event()
-        assert "未启用" in await plugin.send_voice(event, "你好")
+        assert "未启用" in await plugin.send_voice_auto(event, "你好")
         assert not event.sent
         plugin.config = before
     plugin.config["auto_reply_voice"] = False
@@ -254,11 +258,11 @@ async def test_tool_permissions_and_auto_switch(plugin):
 @pytest.mark.asyncio
 async def test_tool_failure_allows_retry_and_preserves_text(plugin):
     event = Event(fail=True)
-    assert "失败" in await plugin.send_voice(event, "你好", "manual", "温柔。")
+    assert "失败" in await plugin.send_voice_manual(event, "你好", "温柔。")
     assert not event.get_extra(TOOL_SENT) and not event.get_extra(TOOL_BUSY)
     assert event.result.chain and not plugin.jobs
     event.fail = False
-    assert "成功" in await plugin.send_voice(event, "你好", "manual", "温柔。")
+    assert "成功" in await plugin.send_voice_manual(event, "你好", "温柔。")
 
 
 @pytest.mark.asyncio
@@ -271,9 +275,9 @@ async def test_tool_busy_guard_and_unload_cancellation(plugin):
 
     plugin.http.synthesize = synth
     event = Event()
-    task = asyncio.create_task(plugin.send_voice(event, "你好", "manual", "温柔。"))
+    task = asyncio.create_task(plugin.send_voice_manual(event, "你好", "温柔。"))
     await entered.wait()
-    assert "正在生成" in await plugin.send_voice(event, "你好")
+    assert "正在生成" in await plugin.send_voice_auto(event, "你好")
     await plugin.terminate()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -283,6 +287,64 @@ async def test_tool_busy_guard_and_unload_cancellation(plugin):
 
 def test_tool_registered_with_real_astrbot():
     from astrbot.core.provider.register import llm_tools
+    from astrbot.core.star.star_handler import star_handlers_registry
 
-    tool = next(t for t in llm_tools.func_list if t.name == "emotive_send_voice")
-    assert set(tool.parameters["properties"]) == {"text", "mode", "instruction"}
+    assert not any(t.name == "emotive_send_voice" for t in llm_tools.func_list)
+    for method, properties in [
+        ("send_voice_auto", {"text", "context_num"}),
+        ("send_voice_manual", {"text", "instruction"}),
+    ]:
+        tool = next(t for t in llm_tools.func_list if t.name == "emotive_" + method)
+        assert tool.handler.__module__ == "plugin_under_test.main"
+        metadata = star_handlers_registry.get_handler_by_full_name(
+            "plugin_under_test.main_" + method
+        )
+        assert metadata.handler_module_path == "plugin_under_test.main"
+        assert set(tool.parameters["properties"]) == properties
+
+
+def test_root_entrypoint_initializes_and_registers(monkeypatch, tmp_path):
+    from astrbot.api.star import StarTools
+    from astrbot.core.star.star import star_map
+
+    monkeypatch.setattr(StarTools, "get_data_dir", lambda *args: tmp_path)
+    context = SimpleNamespace()
+    instance = EmotiveTTS(context, {})
+    assert instance.context is context
+    assert instance.data_dir == tmp_path / "audio"
+    assert star_map["plugin_under_test.main"].star_cls_type is EmotiveTTS
+    assert EmotiveTTS.send_voice_auto.__module__ == "plugin_under_test.main"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [0, 2, 8])
+async def test_tool_context_count_overrides_config_without_mutating_snapshot(plugin, count):
+    import json
+
+    plugin.config.update(context_messages=1, analysis_mode="external")
+    payloads = []
+
+    async def analyze(config, prompt, payload):
+        payloads.append(json.loads(payload))
+        return '{"instruction":"温柔。"}'
+
+    plugin.http.analyze_external = analyze
+    event = Event()
+    req = SimpleNamespace(
+        contexts=[{"role": "user", "content": str(i)} for i in range(10)],
+        system_prompt="角色",
+    )
+    await plugin.capture(event, req)
+    assert "成功" in await plugin.send_voice_auto(event, "你好", context_num=count)
+    expected = [str(i) for i in range(10 - count, 10)] if count else []
+    assert [m["content"] for m in payloads[0]["history"]] == expected
+    assert event.get_extra(SNAPSHOT)["history"] == [{"role": "user", "content": "9"}]
+    assert plugin.config["context_messages"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [-1, 51, 1.5, "5", True, None])
+async def test_tool_rejects_invalid_context_count(plugin, count):
+    event = Event()
+    assert "context_num" in await plugin.send_voice_auto(event, "你好", context_num=count)
+    assert not event.sent and not plugin.jobs

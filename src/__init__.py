@@ -1,1 +1,1 @@
-"""Implementation modules for the emotional speech plugin."""
+"""Implementation modules for the context-aware speech plugin."""
