@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import astrbot.api.message_components as Comp
@@ -66,8 +67,10 @@ def plugin(tmp_path):
 async def test_capture_isolation_and_no_recapture(plugin):
     a, b = Event(), Event("bot:FriendMessage:2")
     req = SimpleNamespace(contexts=[{"role": "user", "content": "甲的历史"}], system_prompt="角色")
+    req.conversation = SimpleNamespace(cid="conversation-a", history=json.dumps(req.contexts))
     await plugin.capture(a, req)
     req.contexts[0]["content"] = "乙的历史"
+    req.conversation = SimpleNamespace(cid="conversation-b", history=json.dumps(req.contexts))
     await plugin.capture(b, req)
     await plugin.capture(a, req)
     assert a.get_extra(SNAPSHOT)["history"][0]["content"] == "甲的历史"
@@ -206,6 +209,7 @@ async def test_tool_auto_uses_bounded_snapshot_even_when_auto_emotion_off(plugin
         contexts=[{"role": "user", "content": x} for x in ["最早", "上一条", "最近"]],
         system_prompt="角色",
     )
+    req.conversation = SimpleNamespace(cid="conversation-test", history=json.dumps(req.contexts))
     await plugin.capture(event, req)
     assert "成功" in await plugin.send_voice_auto(event, "那你明天还来吗？")
     # Tool default is five, independently of the automatic reply's configured two.
@@ -334,6 +338,7 @@ async def test_tool_context_count_overrides_config_without_mutating_snapshot(plu
         contexts=[{"role": "user", "content": str(i)} for i in range(10)],
         system_prompt="角色",
     )
+    req.conversation = SimpleNamespace(cid="conversation-test", history=json.dumps(req.contexts))
     await plugin.capture(event, req)
     assert "成功" in await plugin.send_voice_auto(event, "你好", context_num=count)
     expected = [str(i) for i in range(10 - count, 10)] if count else []
@@ -538,3 +543,50 @@ async def test_temporary_analysis_debug_toggle_and_fallback(plugin, monkeypatch,
         )
     else:
         info.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_capture_prefers_saved_history_over_injected_request_contexts(plugin):
+    original = [{"role": "user", "content": str(i)} for i in range(7)]
+    req = SimpleNamespace(
+        contexts=[{"role": "user", "content": "injected memory"}],
+        system_prompt="角色",
+        conversation=SimpleNamespace(cid="saved", history=json.dumps(original)),
+    )
+    event = Event()
+    await plugin.capture(event, req)
+    snapshot = event.get_extra(SNAPSHOT)
+    assert snapshot["history"] == original[-5:]
+    assert snapshot["tool_history"] == original
+    assert req.contexts[0]["content"] == "injected memory"
+    assert snapshot["persona"] == "角色"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["", "[]", "{}", "invalid"])
+async def test_no_request_context_fallback(plugin, raw):
+    req = SimpleNamespace(
+        contexts=[{"role": "user", "content": "injected memory"}],
+        system_prompt="角色",
+        conversation=SimpleNamespace(cid="saved", history=raw),
+    )
+    event = Event()
+    await plugin.capture(event, req)
+    assert event.get_extra(SNAPSHOT)["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_load_saved_history_via_manager_when_request_has_no_conversation(plugin):
+    from unittest.mock import AsyncMock
+
+    manager = SimpleNamespace(
+        get_curr_conversation_id=AsyncMock(return_value="cid"),
+        get_conversation=AsyncMock(
+            return_value=SimpleNamespace(history='[{"role":"user","content":"数据库正文"}]')
+        ),
+    )
+    plugin.context = SimpleNamespace(conversation_manager=manager)
+    event = Event()
+    await plugin.capture(event, SimpleNamespace(contexts=[], system_prompt="角色"))
+    assert event.get_extra(SNAPSHOT)["history"][0]["content"] == "数据库正文"
+    manager.get_conversation.assert_awaited_once_with(event.unified_msg_origin, "cid")

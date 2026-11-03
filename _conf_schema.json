@@ -80,7 +80,7 @@
     "description": "自定义接口完整URL",
     "type": "string",
     "default": "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer",
-    "hint": "仅自定义模式使用。服务须兼容阿里TTS请求体，并返回output.audio.url。",
+    "hint": "自定义同步语音API的完整HTTPS地址。请求体和返回方式由下面的模板与选项决定。",
     "condition": {
       "tts_mode": "自定义兼容接口"
     },
@@ -91,7 +91,7 @@
     "description": "自定义请求头（JSON）",
     "type": "text",
     "default": "{}",
-    "hint": "例如 {\"Authorization\":\"Bearer ...\"}；只影响自定义接口，切回阿里时不会发送。",
+    "hint": "可新增多对key/value或粘贴JSON。支持 <api_key> 等动态变量；例如 {\"Authorization\":\"Bearer <api_key>\"}。已保存请求头不回显，重新编辑须完整填写。",
     "condition": {
       "tts_mode": "自定义兼容接口"
     },
@@ -109,13 +109,16 @@
         "自定义兼容接口"
       ]
     },
-    "required": true
+    "required": true,
+    "required_condition": {
+      "tts_mode": "阿里云"
+    }
   },
   "voice": {
     "description": "语音音色ID",
     "type": "string",
     "default": "",
-    "hint": "必须填写与模型、地域匹配的复刻或设计音色。",
+    "hint": "阿里模式必须填写；自定义模式仅在请求模板引用 <voice> 时需要。",
     "invisible": true,
     "condition": {
       "tts_mode": [
@@ -123,7 +126,10 @@
         "自定义兼容接口"
       ]
     },
-    "required": true
+    "required": true,
+    "required_condition": {
+      "tts_mode": "阿里云"
+    }
   },
   "speech_rate": {
     "description": "语速",
@@ -151,7 +157,7 @@
   "voice_persona": {
     "description": "语音人设",
     "type": "text",
-    "default": "清亮轻巧的女孩声线，声音靠前、轻松柔软，保持音色和性别感一致。像和熟悉的人随口聊天，自然灵动，有一点俏皮和小机灵，但不刻意装嫩、卖萌或夹嗓子。嘴硬心软，玩笑和小埋怨里可以藏着笑意；安慰人时收起玩笑，温柔认真；解释事情时轻松清楚。着急或心虚时可以有自然的语气变化，但不变成粗重喊叫。情绪跟随上下文，不是每句话都傲娇或兴奋。停顿自然，句尾自然收住，避免念稿、播音腔和夸张表演。",
+    "default": "清亮轻巧的女孩声线，声音靠前、轻松柔软，保持音色和性别感一致，语气可爱一些。",
     "hint": "填写声音特点和说话习惯，最多2000字。例如：清亮轻巧的女孩声线，自然灵动，嘴硬心软，安慰人时温柔认真。自动语气分析会结合上文提炼成短指令，不会将整段人设附加给语音模型；留空不额外指定，手动工具不使用。",
     "invisible": true
   },
@@ -400,6 +406,63 @@
     "type": "int",
     "default": -1,
     "hint": "-1不主动传种子，使用服务默认；固定种子范围0至65535。可到“种子试听”跨五种语境比较后确认。种子数值不是质量分数，越大不代表越好。",
+    "invisible": true
+  },
+  "tts_body_template": {
+    "description": "自定义请求体（JSON）",
+    "type": "text",
+    "default": "{\n  \"model\": \"<model>\",\n  \"input\": {\n    \"text\": \"<text>\",\n    \"instruction\": \"<instruction>\",\n    \"voice\": \"<voice>\",\n    \"rate\": \"<speech_rate>\",\n    \"seed\": \"<seed>\",\n    \"format\": \"wav\",\n    \"sample_rate\": 24000\n  }\n}",
+    "hint": "支持JSON粘贴或逐项填写。变量：<text> <instruction> <model> <voice> <speech_rate> <seed> <api_key>。整值语速/种子保留数字；seed=-1时省略该字段。模板可能含凭据，已保存内容不回显，留空保留；清除后恢复默认阿里请求体。",
+    "condition": {
+      "tts_mode": "自定义兼容接口"
+    },
+    "invisible": true
+  },
+  "tts_response_mode": {
+    "description": "音频获取方式",
+    "type": "string",
+    "default": "url",
+    "options": [
+      "url",
+      "binary",
+      "base64",
+      "hex"
+    ],
+    "labels": [
+      "JSON中的音频网址",
+      "直接返回音频文件",
+      "JSON中的Base64音频",
+      "JSON中的Hex音频"
+    ],
+    "hint": "支持常见同步HTTP接口，暂不支持SSE、WebSocket或异步任务轮询。",
+    "condition": {
+      "tts_mode": "自定义兼容接口"
+    },
+    "invisible": true
+  },
+  "tts_audio_path": {
+    "description": "音频字段路径",
+    "type": "string",
+    "default": "output.audio.url",
+    "hint": "例如 output.audio.url、data.audio、outputs[0].audio。直接返回文件时无需填写。支持JSON Pointer，如 /data/audio。",
+    "condition": {
+      "tts_mode": "自定义兼容接口",
+      "tts_response_mode": [
+        "url",
+        "base64",
+        "hex"
+      ]
+    },
+    "invisible": true
+  },
+  "tts_auto_auth": {
+    "description": "根据API Key自动补全Bearer鉴权",
+    "type": "bool",
+    "default": true,
+    "hint": "沿用旧版行为；若仅使用X-API-Key等自定义鉴权，可关闭。显式填写Authorization时以模板为准。",
+    "condition": {
+      "tts_mode": "自定义兼容接口"
+    },
     "invisible": true
   }
 }

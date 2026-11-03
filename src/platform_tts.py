@@ -35,6 +35,7 @@ def platform_connection_config(context, config) -> dict:
     result = dict(config)
     result.update(
         tts_mode=CUSTOM,
+        _platform_aliyun=True,
         api_key=key.strip(),
         tts_endpoint=endpoint,
         tts_headers=source.get("custom_headers") or "{}",

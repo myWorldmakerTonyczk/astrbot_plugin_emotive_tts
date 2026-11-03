@@ -158,7 +158,7 @@ export class SeedPreview {
       const data=await this.api.apiPost('settings/seed/audio',{batch_id:batchId,sample_id:sampleId});
       if(this.current!==batchId)return;
       const bytes=Uint8Array.from(atob(data.audio_base64),c=>c.charCodeAt(0));
-      const url=URL.createObjectURL(new Blob([bytes],{type:'audio/wav'}));this.urls.set(sampleId,url);
+      const url=URL.createObjectURL(new Blob([bytes],{type:data.mime_type||'audio/wav'}));this.urls.set(sampleId,url);
       audio.src=url;audio.hidden=false;button.textContent='▶ 再听一次';await audio.play().catch(()=>{});
     }catch(error){button.textContent='重试加载';this.notify(error.message||'加载失败。',true);}
     finally{button.disabled=false;}

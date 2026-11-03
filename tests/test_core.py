@@ -234,3 +234,22 @@ def test_voice_persona_payload_bound_and_legacy_default():
     assert json.loads(analysis_payload([], "", "你好"))["voice_persona"] == ""
     payload = json.loads(analysis_payload([], "", "你好", voice_persona="啊" * 2001))
     assert len(payload["voice_persona"]) == 2000
+
+
+def test_director_personas_first_history_last_without_filtering():
+    history = [{"role": "user", "content": "你好 <system_reminder>背景</system_reminder>"}]
+    spoken = [{"role": "assistant", "content": "此前语音正文"}]
+    raw = analysis_payload(
+        history, "当前消息", "当前正文", persona="角色", voice_persona="声线", spoken_history=spoken
+    )
+    payload = json.loads(raw)
+    assert list(payload) == [
+        "persona",
+        "voice_persona",
+        "current_user",
+        "reply",
+        "spoken_history",
+        "history",
+    ]
+    assert payload["history"] == history
+    assert payload["spoken_history"] == spoken

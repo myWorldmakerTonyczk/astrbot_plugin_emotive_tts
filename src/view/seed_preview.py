@@ -4,6 +4,7 @@ import base64
 
 from astrbot.api.web import error_response, json_response, request
 
+from ..custom_request import audio_extension
 from ..network import safe_error_message
 from ..seed_lab import SeedLab
 
@@ -65,7 +66,17 @@ class SeedPreviewView:
             data = self.lab.audio(body.get("batch_id"), body.get("sample_id"))
         except (ValueError, OSError):
             return error_response("音频不存在或尚未生成，请刷新。", status_code=404)
-        return json_response({"audio_base64": base64.b64encode(data).decode("ascii")})
+        return json_response(
+            {
+                "audio_base64": base64.b64encode(data).decode("ascii"),
+                "mime_type": {
+                    "wav": "audio/wav",
+                    "mp3": "audio/mpeg",
+                    "ogg": "audio/ogg",
+                    "flac": "audio/flac",
+                }[audio_extension(data)],
+            }
+        )
 
     async def apply(self):
         body = await request.json(default=None)

@@ -9,13 +9,14 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..custom_request import DEFAULT_BODY, parse_template
 from ..emotion import validate_instruction
 from ..network import headers_from_config, validate_url
 from ..queue_manager import WorkGate
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "views/settings/schema.json"
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-SECRETS = {"api_key", "analysis_api_key", "tts_headers", "analysis_headers"}
+SECRETS = {"api_key", "analysis_api_key", "tts_headers", "analysis_headers", "tts_body_template"}
 EDITABLE = set(SCHEMA) - {"config_revision", "whitelist_revision", "umo_whitelist"}
 LIMITS = {
     "speech_rate": (0.5, 2),
@@ -42,6 +43,9 @@ def settings_payload(config) -> dict:
     values = {key: config.get(key, item["default"]) for key, item in SCHEMA.items()}
     configured = {key: bool(values[key] and values[key] != "{}") for key in SECRETS}
     for key in SECRETS:
+        if key == "tts_body_template" and values[key] == DEFAULT_BODY:
+            configured[key] = False
+            continue
         values[key] = ""
     for key in ("config_revision", "whitelist_revision", "umo_whitelist"):
         values.pop(key, None)
@@ -92,6 +96,13 @@ def validate_changes(changes: dict) -> dict:
             raise ValueError(f"{item['description']}范围为{low}至{high}。")
         if key in SECRETS and not value:
             continue  # An empty masked input keeps the stored value.
+        if key == "tts_body_template":
+            try:
+                parse_template(value)
+            except (ValueError, TypeError, RecursionError):
+                raise ValueError("请求体须为有效JSON对象，只能使用提供的变量标记。") from None
+        if key == "tts_audio_path" and len(value) > 500:
+            raise ValueError("音频字段路径最多500字符。")
         if key.endswith("headers"):
             try:
                 headers_from_config(value)
@@ -127,6 +138,9 @@ class SettingsView:
 
         self.seed_preview = SeedPreviewView(self, SCHEMA, revision)
         self.seed_preview.register()
+        context.register_web_api(
+            prefix + "/test-request", self.test_request, ["POST"], "测试自定义语音接口"
+        )
 
     def payload(self):
         result = settings_payload(self.plugin.config)
@@ -161,6 +175,11 @@ class SettingsView:
             field["options"].append(selected)
             field["labels"].append(selected + "（当前不可用）")
         return result
+
+    async def test_request(self):
+        from .request_test import test_request
+
+        return await test_request(self, SCHEMA, revision)
 
     async def get(self):
         return json_response(self.payload(), headers={"Cache-Control": "no-store"})

@@ -2,9 +2,9 @@ const bridge = window.AstrBotPluginView;
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
 const save = document.querySelector('#save');
-const secrets = new Set(['api_key','analysis_api_key','tts_headers','analysis_headers']);
+const secrets = new Set(['api_key','analysis_api_key','tts_headers','analysis_headers','tts_body_template']);
 const groups = {
- voice: ['连接与音色','选择匹配的模型和音色，设置连接凭据。',['tts_mode','tts_provider_id','api_key','aliyun_region','aliyun_workspace','tts_endpoint','tts_headers','tts_model','voice','speech_rate','tts_seed']],
+ voice: ['连接与音色（目前仅保证阿里云 CosyVoice 模型，其他模型不保证）','选择匹配的模型和音色，设置连接凭据。',['tts_mode','tts_provider_id','api_key','aliyun_region','aliyun_workspace','tts_endpoint','tts_headers','tts_auto_auth','tts_body_template','tts_response_mode','tts_audio_path','tts_model','voice','speech_rate','tts_seed']],
  emotion: ['语气与上下文','让语音结合对话内容，使用自然的情绪和停顿。',['auto_emotion','context_messages','voice_persona','fallback_instruction','analysis_mode','analysis_provider_id','analysis_endpoint','analysis_model','analysis_api_key','analysis_headers']],
  sending: ['发送与会话','控制自动语音、工具调用和可用的聊天范围。',['enabled','auto_reply_voice','tool_enabled','private_enabled','group_enabled','private_umo_whitelist','group_umo_whitelist','trigger_probability','send_text_with_voice','max_text_chars']],
  advanced: ['高级设置','调整任务容量、超时和临时文件保留时间。',['analysis_debug','context_max_chars','include_persona','analysis_timeout','tts_timeout','job_timeout','concurrency','queue_capacity','audio_ttl_seconds']]
@@ -16,7 +16,7 @@ function notify(text, kind=''){status.textContent=text;status.className=kind;}
 function update(){document.querySelector('#dirty').textContent=dirty.size||cleared.size?'有未保存的修改':'没有未保存的修改';save.disabled=busy||!state||(!dirty.size&&!cleared.size);document.querySelector('#defaults').disabled=busy||!state;}
 function conditions(){document.querySelector('#mode').textContent=dirty.has('tts_mode')?dirty.get('tts_mode'):state.values.tts_mode;for(const node of form.querySelectorAll('[data-key]')){const condition=state.schema[node.dataset.key].condition||{};node.hidden=!Object.entries(condition).every(([k,v])=>(Array.isArray(v)?v.includes(dirty.has(k)?dirty.get(k):state.values[k]):(dirty.has(k)?dirty.get(k):state.values[k])===v));
  const mark=node.querySelector('.required');
- if(mark){const meta=state.schema[node.dataset.key];const input=document.querySelector('#'+node.dataset.key);const value=input.value.trim();const filled=value!==''&&(!['int','float'].includes(meta.type)||Number.isFinite(Number(value)));mark.textContent=filled?'（已填）':'（必填）';mark.className=filled?'required filled':'required';}
+ if(mark){const meta=state.schema[node.dataset.key];mark.hidden=!Object.entries(meta.required_condition||{}).every(([k,v])=>(dirty.has(k)?dirty.get(k):state.values[k])===v);const input=document.querySelector('#'+node.dataset.key);const value=input.value.trim();const filled=value!==''&&(!['int','float'].includes(meta.type)||Number.isFinite(Number(value)));mark.textContent=filled?'（已填）':'（必填）';mark.className=filled?'required filled':'required';}
 }}
 function render(){form.replaceChildren();document.querySelector('#mode').textContent=state.values.tts_mode;
  for(const [id,[title,desc,keys]] of Object.entries(groups)){
@@ -42,7 +42,17 @@ function render(){form.replaceChildren();document.querySelector('#mode').textCon
  if(secrets.has(key)){cleared.delete(key);const clear=row.querySelector('.clear');if(clear)clear.textContent='清除已存凭据';}
  if(JSON.stringify(val)===JSON.stringify(state.values[key]))dirty.delete(key);else dirty.set(key,val);conditions();update();});
  if(secrets.has(key)&&state.configured[key]){const button=document.createElement('button');button.type='button';button.className='clear';button.textContent=cleared.has(key)?'撤销清除':'清除已存凭据';button.onclick=()=>{if(cleared.has(key)){cleared.delete(key);button.textContent='清除已存凭据';}else{cleared.add(key);dirty.delete(key);input.value='';button.textContent='撤销清除';}update();};row.append(button);}
- fields.append(row);}
+ fields.append(row);if(['tts_headers','tts_body_template'].includes(key)&&window.EmotiveTemplateEditor)window.EmotiveTemplateEditor(input,key);
+ if(key==='tts_audio_path'){
+ const testRow=document.createElement('div');testRow.className='field wide';testRow.dataset.key='tts_response_mode';
+ const test=document.createElement('button');test.type='button';test.textContent='测试当前已保存的接口（生成1句语音）';
+ const result=document.createElement('p');result.className='hint';result.textContent='使用当前语气分析和语音配置，会调用API；不发送聊天，不保存会话记忆。';
+ const audio=document.createElement('audio');audio.controls=true;audio.hidden=true;let audioUrl='';
+ test.onclick=async()=>{if(dirty.size||cleared.size){notify('请先保存或撤销修改，再测试。','error');return;}test.disabled=true;result.textContent='正在生成测试语音…';
+ try{const response=await bridge.apiPost('settings/test-request',{revision:state.revision});if(audioUrl)URL.revokeObjectURL(audioUrl);const bytes=Uint8Array.from(atob(response.audio_base64),c=>c.charCodeAt(0));audioUrl=URL.createObjectURL(new Blob([bytes],{type:response.mime_type}));audio.src=audioUrl;audio.hidden=false;result.textContent='成功取得 '+response.format.toUpperCase()+' 音频。正文：'+response.text+'；instruction：'+response.instruction+(response.source==='fallback'?'（分析失败，使用默认语气）':'');}
+ catch(error){result.textContent=error.message||'测试失败，请检查模板和音频获取设置。';}finally{test.disabled=false;}};
+ testRow.append(test,result,audio);fields.append(testRow);}
+ }
  form.append(section);}
  conditions();update();}
 for(const button of document.querySelectorAll('[data-tab]'))button.onclick=()=>{active=button.dataset.tab;for(const b of document.querySelectorAll('[data-tab]')){if(b===button)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}for(const section of form.children)section.hidden=section.dataset.section!==active;form.hidden=active==='seeds';const preview=document.querySelector('#seed-preview');if(preview)preview.hidden=active!=='seeds';const footer=document.querySelector('footer');if(footer)footer.hidden=active==='seeds';};
@@ -58,6 +68,6 @@ document.querySelector('#defaults').onclick=()=>{
 };
 let reloadArmed=false;
 document.querySelector('#reload').onclick=()=>{if((dirty.size||cleared.size)&&!reloadArmed){reloadArmed=true;document.querySelector('#reload').textContent='确认放弃修改';notify('再次点击将放弃未保存的修改。');return;}reloadArmed=false;document.querySelector('#reload').textContent='重新加载';load();};
-save.onclick=async()=>{busy=true;update();try{const changes=Object.fromEntries(dirty);state=await bridge.apiPost('settings/save',{revision:state.revision,changes,clear_secrets:[...cleared]});dirty.clear();cleared.clear();render();notify('设置已保存。','success');}catch(e){notify(e.message||'保存失败，修改仍保留在页面中。','error');}finally{busy=false;update();}};
+save.onclick=async()=>{if(form.checkValidity&&!form.checkValidity()){notify('请先修正请求模板中的无效字段。','error');return;}busy=true;update();try{const changes=Object.fromEntries(dirty);state=await bridge.apiPost('settings/save',{revision:state.revision,changes,clear_secrets:[...cleared]});dirty.clear();cleared.clear();render();notify('设置已保存。','success');}catch(e){notify(e.message||'保存失败，修改仍保留在页面中。','error');}finally{busy=false;update();}};
 form.onsubmit=e=>e.preventDefault();
 if(!bridge){notify('请在 AstrBot 插件详情的“语音设置”视图中打开此页面。','error');}else{try{const ctx=await bridge.ready();document.body.classList.toggle('dark',!!ctx.isDark);bridge.onContext(ctx=>document.body.classList.toggle('dark',!!ctx.isDark));await load();}catch(e){notify('无法连接 AstrBot，请重新打开视图。','error');}}

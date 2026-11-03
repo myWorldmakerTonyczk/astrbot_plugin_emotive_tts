@@ -16,12 +16,14 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context, StarTools
 
 from .configuration import PLATFORM, migrate_mode, migrate_voice_style, migrate_whitelists
+from .custom_request import audio_extension
 from .director import resolve_instruction
 from .emotion import clean_for_speech, history_snapshot
 from .events import DONE, SNAPSHOT, TOOL_SENT
 from .network import HttpServices, safe_error_message
 from .platform_tts import platform_connection_config
 from .queue_manager import WorkGate
+from .stored_history import read_stored_history
 from .view.settings import SettingsView
 from .voice_memory import VoiceMemory, supplement_request
 
@@ -68,18 +70,19 @@ class EmotiveTTSMixin:
         if not self.allowed(event) or event.get_extra(SNAPSHOT) is not None:
             return
         original_persona = req.system_prompt or ""
+        stored_history, stored_cid = await read_stored_history(self.context, event, req)
         spoken = await supplement_request(self, event, req)
         event.set_extra(
             SNAPSHOT,
             {
-                "conversation_id": getattr(getattr(req, "conversation", None), "cid", None),
+                "conversation_id": stored_cid,
                 "history": history_snapshot(
-                    req.contexts,
+                    stored_history,
                     max(0, min(50, int(self.config.get("context_messages", 5)))),
                     max(0, min(20000, int(self.config.get("context_max_chars", 4000)))),
                 ),
                 "tool_history": history_snapshot(
-                    req.contexts,
+                    stored_history,
                     50,
                     max(0, min(20000, int(self.config.get("context_max_chars", 4000)))),
                 )
@@ -92,6 +95,15 @@ class EmotiveTTSMixin:
                 else "",
             },
         )
+
+        if self.config.get("analysis_debug", True):
+            snapshot = event.get_extra(SNAPSHOT)
+            logger.info(
+                "[EmotiveTTS][调试] 历史来源=conversation.history；存储消息=%d；自动历史=%d；工具候选历史=%d；未使用req.contexts作为语气历史来源",
+                len(stored_history),
+                len(snapshot["history"]),
+                len(snapshot["tool_history"]),
+            )
 
     async def instruction(
         self,
@@ -156,7 +168,11 @@ class EmotiveTTSMixin:
                     config["speech_rate"] = speech_rate
                 config["api_key"] = config.get("api_key") or os.getenv("DASHSCOPE_API_KEY", "")
                 data = await self.http.synthesize(config, text, instruction)
-                path = self.data_dir / (uuid.uuid4().hex + ".wav")
+                try:
+                    extension = audio_extension(data)
+                except ValueError:
+                    extension = "wav"  # Transport already validates production responses.
+                path = self.data_dir / (uuid.uuid4().hex + "." + extension)
                 await asyncio.to_thread(path.write_bytes, data)
                 # Send before touching the original result: failure retains text.
                 await event.send(

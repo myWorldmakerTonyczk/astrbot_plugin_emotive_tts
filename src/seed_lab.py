@@ -15,6 +15,7 @@ from pathlib import Path
 from astrbot.api import logger
 
 from .configuration import PLATFORM
+from .custom_request import audio_extension
 from .director import resolve_instruction
 from .emotion import history_snapshot
 from .events import SNAPSHOT
@@ -112,6 +113,8 @@ class PreviewEvent:
 
 def playback_wav(data):
     """Replace placeholder frame counts without modifying PCM samples."""
+    if audio_extension(data) != "wav":
+        return data
     try:
         with wave.open(io.BytesIO(data), "rb") as src:
             params = src.getparams()
@@ -191,7 +194,7 @@ class SeedLab:
         original_mode = config.get("tts_mode")
         if config.get("tts_mode") == PLATFORM:
             config = copy.deepcopy(platform_connection_config(self.plugin.context, config))
-        if not config.get("voice"):
+        if not config.get("voice") and original_mode != "自定义兼容接口":
             raise ValueError("请先保存有效的语音音色。")
         config["api_key"] = config.get("api_key") or os.getenv("DASHSCOPE_API_KEY", "")
         if any(len(s["reply"]) > int(config["max_text_chars"]) for s in PRESETS):

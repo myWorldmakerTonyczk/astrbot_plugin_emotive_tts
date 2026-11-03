@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 
 from .configuration import speech_connection
+from .custom_request import audio_extension
 
 
 class ServiceError(RuntimeError):
@@ -17,6 +18,9 @@ class ServiceError(RuntimeError):
 
 
 ERROR_HINTS = {
+    "invalid request template": "请求头或请求体模板无效，请检查JSON及变量标记",
+    "invalid audio response mapping": "未能提取音频，请检查获取方式、字段路径和编码；支持WAV/MP3/OGG/FLAC",
+    "unsupported audio format": "未识别到支持的音频文件，支持WAV、MP3、OGG、FLAC，不支持裸PCM",
     "invalid TTS seed": "语音种子须为-1或0至65535的整数",
     "unsupported platform TTS protocol": "目前仅支持复用阿里dashscope_tts提供商配置，其他协议暂不支持",
     "voice API key is required": "所选平台语音提供商未填写有效API Key",
@@ -179,12 +183,40 @@ class HttpServices:
             if resp.status != 200:
                 raise ServiceError(f"audio HTTP {resp.status}")
             data = await read_limited(resp, 32 * 1024 * 1024)
-        if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-            raise ServiceError("expected WAV audio")
+        try:
+            audio_extension(data)
+        except ValueError:
+            raise ServiceError("unsupported audio format") from None
         return data
+
+    async def post_audio_request(self, url, body, headers, timeout):
+        validate_url(url)
+        session = await self._session()
+        async with session.post(
+            url,
+            json=body,
+            headers=headers,
+            allow_redirects=False,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            if not 200 <= resp.status < 300:
+                raise ServiceError(f"API HTTP {resp.status}")
+            return await read_limited(resp, 48 * 1024 * 1024)
 
     async def synthesize(self, config, text, instruction):
         timeout = float(config.get("tts_timeout", 30))
+        if config.get("tts_mode") in ("自定义兼容接口", "custom") and not config.get(
+            "_platform_aliyun"
+        ):
+            from .custom_request import synthesize_custom
+
+            seed = config.get("tts_seed", -1)
+            if type(seed) is not int or not -1 <= seed <= 65535:
+                raise ServiceError("invalid TTS seed")
+            rate = float(config.get("speech_rate", 1.12))
+            if not 0.5 <= rate <= 2.0 or not 0 < timeout <= 120:
+                raise ServiceError("invalid speech rate or timeout")
+            return await synthesize_custom(self, config, text, instruction)
         if not config.get("voice"):
             raise ServiceError("voice ID is required")
         rate = float(config.get("speech_rate", 1.12))
