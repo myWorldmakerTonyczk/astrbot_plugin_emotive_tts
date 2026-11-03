@@ -3,6 +3,7 @@
 import asyncio
 import ipaddress
 import json
+import re
 import socket
 from urllib.parse import urlsplit, urlunsplit
 
@@ -13,6 +14,62 @@ from .configuration import speech_connection
 
 class ServiceError(RuntimeError):
     """Only sanitized diagnostics, never provider response bodies or URLs."""
+
+
+ERROR_HINTS = {
+    "invalid TTS seed": "语音种子须为-1或0至65535的整数",
+    "unsupported platform TTS protocol": "目前仅支持复用阿里dashscope_tts提供商配置，其他协议暂不支持",
+    "voice API key is required": "所选平台语音提供商未填写有效API Key",
+    "platform TTS provider is unavailable": "未选择平台语音模型，或所选提供商当前不可用",
+    "invalid platform audio file": "平台语音模型未返回有效的本地音频文件",
+    "voice ID is required": "未填写语音音色ID，请在语音设置中填写",
+    "invalid speech rate or timeout": "语速或超时设置超出允许范围",
+    "missing audio URL": "合成响应未返回音频下载地址",
+    "expected WAV audio": "下载内容不是有效WAV音频",
+    "provider returned an error": "语音服务返回错误",
+    "endpoint must be a public HTTPS URL": "接口或下载地址必须为公开HTTPS地址",
+    "private address rejected": "接口或下载地址解析到了非公网地址",
+    "invalid custom header": "额外请求头格式不合法",
+    "headers must be a JSON object": "额外请求头必须是JSON对象",
+    "invalid JSON response": "服务响应不是有效JSON",
+    "response too large": "服务响应超过大小限制",
+    "invalid analysis response": "语气分析响应结构不符合要求",
+}
+PROVIDER_CODES = {
+    "InvalidParameter",
+    "InvalidApiKey",
+    "InvalidAPIKey",
+    "ModelNotFound",
+    "AccessDenied",
+    "QuotaExceeded",
+    "Throttling",
+    "InvalidInput",
+    "DataInspectionFailed",
+    "InternalError",
+    "BadRequest",
+    "InvalidParameterValue",
+}
+
+
+def safe_error_message(exc: Exception) -> str:
+    """Log only our fixed diagnostics/status codes, never arbitrary exception text."""
+    if isinstance(exc, ServiceError):
+        message = str(exc)
+        if message in ERROR_HINTS:
+            return ERROR_HINTS[message]
+        if re.fullmatch(r"(?:API|audio) HTTP [1-5][0-9]{2}", message):
+            return message
+        if message.startswith("provider code ") and message[14:] in PROVIDER_CODES:
+            return "服务错误代码: " + message[14:]
+        return "ServiceError（未分类服务错误）"
+    if isinstance(exc, TimeoutError):
+        return "请求或排队超时"
+    return type(exc).__name__
+
+
+def response_error(data) -> str | None:
+    code = data.get("code") if isinstance(data, dict) else None
+    return "provider code " + code if isinstance(code, str) and code in PROVIDER_CODES else None
 
 
 def validate_url(url):
@@ -96,13 +153,16 @@ class HttpServices:
             allow_redirects=False,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
-            if resp.status != 200:
-                raise ServiceError(f"API HTTP {resp.status}")
             raw = await read_limited(resp, 1024 * 1024)
             try:
-                return json.loads(raw)
+                data = json.loads(raw)
             except (ValueError, UnicodeError):
+                if resp.status != 200:
+                    raise ServiceError(f"API HTTP {resp.status}") from None
                 raise ServiceError("invalid JSON response") from None
+            if resp.status != 200:
+                raise ServiceError(response_error(data) or f"API HTTP {resp.status}")
+            return data
 
     async def download_audio(self, url, timeout):
         # Legacy Aliyun replies can contain HTTP OSS links. Upgrade only official
@@ -142,12 +202,17 @@ class HttpServices:
                 "language_hints": ["zh"],
             },
         }
+        seed = config.get("tts_seed", -1)
+        if type(seed) is not int or not -1 <= seed <= 65535:
+            raise ServiceError("invalid TTS seed")
+        if seed >= 0:
+            body["input"]["seed"] = seed
         endpoint, extra_headers = speech_connection(config)
         headers = headers_from_config(extra_headers, config.get("api_key", ""))
         async with asyncio.timeout(timeout):
             data = await self.post_json(endpoint, body, headers, timeout)
             if data.get("code"):
-                raise ServiceError("provider returned an error")
+                raise ServiceError(response_error(data) or "provider returned an error")
             url = (data.get("output") or {}).get("audio", {}).get("url")
             if not isinstance(url, str):
                 raise ServiceError("missing audio URL")

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>语音设置</title><link rel="stylesheet" href="./style.css"></head>
 <body><div class="shell"><header><div class="mark" aria-hidden="true">♫</div><div><h1>语音设置</h1><p>调整声音，也调整说话的方式。</p></div><span id="mode">连接中</span></header>
-<div class="layout"><nav aria-label="设置分组"><button data-tab="voice" aria-current="page">连接与音色</button><button data-tab="emotion">语气与上下文</button><button data-tab="sending">发送与会话</button><button data-tab="advanced">高级设置</button><p>语音 API 类型请在<br>插件配置中切换。</p></nav>
-<main><div id="status" role="status" aria-live="polite">正在读取设置…</div><form id="settings"></form></main></div>
-<footer><span id="dirty">没有未保存的修改</span><button type="button" id="reload">重新加载</button><button type="button" id="save" disabled>保存设置</button></footer></div><script type="module" src="./app.js"></script></body></html>
+<div class="layout"><nav aria-label="设置分组"><button data-tab="voice" aria-current="page">连接与音色</button><button data-tab="emotion">语气与上下文</button><button data-tab="sending">发送与会话</button><button data-tab="seeds">种子试听</button><button data-tab="advanced">高级设置</button><p>所有设置统一保存，<br>无需切换其他页面。</p></nav>
+<main><div id="status" role="status" aria-live="polite">正在读取设置…</div><form id="settings"></form><section id="seed-preview" hidden></section></main></div>
+<footer><span id="dirty">没有未保存的修改</span><button type="button" id="defaults" disabled>恢复默认</button><button type="button" id="reload">重新加载</button><button type="button" id="save" disabled>保存设置</button></footer></div><script type="module" src="./app.js"></script><script type="module" src="./seed-preview.js"></script></body></html>

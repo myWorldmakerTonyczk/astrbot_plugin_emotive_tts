@@ -15,19 +15,26 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context, StarTools
 
-from .configuration import migrate_mode
+from .configuration import PLATFORM, migrate_mode, migrate_voice_style, migrate_whitelists
 from .director import resolve_instruction
 from .emotion import clean_for_speech, history_snapshot
 from .events import DONE, SNAPSHOT, TOOL_SENT
-from .network import HttpServices
+from .network import HttpServices, safe_error_message
+from .platform_tts import platform_connection_config
 from .queue_manager import WorkGate
 from .view.settings import SettingsView
+from .voice_memory import VoiceMemory, supplement_request
 
 
 class EmotiveTTSMixin:
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        if migrate_mode(config) and hasattr(config, "save_config"):
+        migrated_mode = migrate_mode(config)
+        migrated_whitelists = migrate_whitelists(config)
+        migrated_voice = migrate_voice_style(config)
+        if (migrated_mode or migrated_whitelists or migrated_voice) and hasattr(
+            config, "save_config"
+        ):
             config.save_config()
         self.config = config
         self.http = HttpServices()
@@ -36,6 +43,7 @@ class EmotiveTTSMixin:
         )
         self.data_dir: Path = StarTools.get_data_dir("astrbot_plugin_emotive_tts") / "audio"
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.voice_memory = VoiceMemory(self.data_dir.parent / "voice_memory.sqlite3")
         self.jobs: set[asyncio.Task[None]] = set()
         self.cleaner: asyncio.Task[None] | None = None
         self.closing = False
@@ -51,13 +59,16 @@ class EmotiveTTSMixin:
         group = bool(event.get_group_id())
         if not self.config.get("group_enabled" if group else "private_enabled", True):
             return False
-        whitelist = self.config.get("umo_whitelist", [])
+        key = "group_umo_whitelist" if group else "private_umo_whitelist"
+        whitelist = self.config.get(key, self.config.get("umo_whitelist", []))
         return not whitelist or event.unified_msg_origin in whitelist
 
     async def capture(self, event: AstrMessageEvent, req) -> None:
         # Snapshot once before chat generation, not from a shared global buffer.
         if not self.allowed(event) or event.get_extra(SNAPSHOT) is not None:
             return
+        original_persona = req.system_prompt or ""
+        spoken = await supplement_request(self, event, req)
         event.set_extra(
             SNAPSHOT,
             {
@@ -74,8 +85,9 @@ class EmotiveTTSMixin:
                 )
                 if self.config.get("tool_enabled", True)
                 else [],
+                "spoken_history": spoken,
                 "user": event.get_message_str()[:2000],
-                "persona": (req.system_prompt or "")[:1500]
+                "persona": original_persona[:1500]
                 if self.config.get("include_persona", True)
                 else "",
             },
@@ -105,10 +117,13 @@ class EmotiveTTSMixin:
         explicit_instruction: str | None = None,
         force_auto: bool = False,
         context_num: int | None = None,
+        speech_rate: float | None = None,
     ) -> None:
         """Track every voice job so plugin unload cancels it and releases its slot."""
         job = asyncio.create_task(
-            self._generate_and_send(event, text, explicit_instruction, force_auto, context_num)
+            self._generate_and_send(
+                event, text, explicit_instruction, force_auto, context_num, speech_rate
+            )
         )
         self.jobs.add(job)
         try:
@@ -123,9 +138,13 @@ class EmotiveTTSMixin:
         explicit_instruction: str | None = None,
         force_auto: bool = False,
         context_num: int | None = None,
+        speech_rate: float | None = None,
     ) -> None:
         async with asyncio.timeout(float(self.config.get("job_timeout", 75))):
             async with self.gate.enter(event.unified_msg_origin):
+                config = dict(self.config)
+                if config.get("tts_mode") == PLATFORM:
+                    config = platform_connection_config(self.context, config)
                 instruction = (
                     explicit_instruction
                     if explicit_instruction is not None
@@ -133,7 +152,8 @@ class EmotiveTTSMixin:
                         event, text, force_auto=force_auto, context_num=context_num
                     )
                 )
-                config = dict(self.config)
+                if speech_rate is not None:
+                    config["speech_rate"] = speech_rate
                 config["api_key"] = config.get("api_key") or os.getenv("DASHSCOPE_API_KEY", "")
                 data = await self.http.synthesize(config, text, instruction)
                 path = self.data_dir / (uuid.uuid4().hex + ".wav")
@@ -172,7 +192,7 @@ class EmotiveTTSMixin:
                 raise
             return
         except Exception as exc:  # noqa: BLE001 -- platform/API failures fall back to text
-            logger.warning("[EmotiveTTS] 语音失败，保留文字: %s", type(exc).__name__)
+            logger.warning("[EmotiveTTS] 语音失败，保留文字: %s", safe_error_message(exc))
             return
         if not self.config.get("send_text_with_voice", True):
             result.chain = [
@@ -183,7 +203,17 @@ class EmotiveTTSMixin:
         while True:
             try:
                 cutoff = time.time() - max(300, int(self.config.get("audio_ttl_seconds", 3600)))
-                for path in self.data_dir.glob("*.wav"):
+                for path in self.data_dir.iterdir():
+                    if path.suffix.lower() not in {
+                        ".wav",
+                        ".mp3",
+                        ".ogg",
+                        ".opus",
+                        ".flac",
+                        ".amr",
+                        ".m4a",
+                    }:
+                        continue
                     if path.stat().st_mtime < cutoff:
                         path.unlink(missing_ok=True)
             except OSError:

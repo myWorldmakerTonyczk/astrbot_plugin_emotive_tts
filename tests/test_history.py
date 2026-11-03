@@ -81,6 +81,7 @@ async def test_failed_delivery_never_saves_speech(plugin):
     event = Event(fail=True)
     assert "失败" in await plugin.send_voice_manual(event, "没送达", "轻快。")
     assert not manager.updates and not plugin.jobs
+    assert await plugin.voice_memory.recall(event.unified_msg_origin, "original") == []
     assert not event.get_extra(TOOL_SENT)
 
 

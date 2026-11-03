@@ -20,3 +20,7 @@ outputs/
 *.log
 *.pem
 *.key
+
+# Local listening experiments and personal evaluation notes
+docs/DEEPSEEK_DIRECTOR_*.md
+docs/VOICE_*.md

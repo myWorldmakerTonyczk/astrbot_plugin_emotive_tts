@@ -292,7 +292,7 @@ def test_tool_registered_with_real_astrbot():
     assert not any(t.name == "emotive_send_voice" for t in llm_tools.func_list)
     for method, properties in [
         ("send_voice_auto", {"text", "context_num"}),
-        ("send_voice_manual", {"text", "instruction"}),
+        ("send_voice_manual", {"text", "instruction", "speech_rate"}),
     ]:
         tool = next(t for t in llm_tools.func_list if t.name == "emotive_" + method)
         assert tool.handler.__module__ == "plugin_under_test.main"
@@ -348,3 +348,193 @@ async def test_tool_rejects_invalid_context_count(plugin, count):
     event = Event()
     assert "context_num" in await plugin.send_voice_auto(event, "你好", context_num=count)
     assert not event.sent and not plugin.jobs
+
+
+@pytest.mark.asyncio
+async def test_analysis_uses_selected_platform_provider(plugin):
+    from unittest.mock import AsyncMock
+
+    plugin.config.update(auto_emotion=True, analysis_provider_id="tone-llm")
+    generate = AsyncMock(return_value=SimpleNamespace(completion_text='{"instruction":"轻快。"}'))
+    plugin.context = SimpleNamespace(llm_generate=generate)
+    assert await plugin.instruction(Event(), "你好") == "轻快。"
+    assert generate.call_args.kwargs["chat_provider_id"] == "tone-llm"
+    assert generate.call_args.kwargs["tools"] is None
+    assert generate.call_args.kwargs["contexts"] == []
+
+
+@pytest.mark.asyncio
+async def test_unselected_analysis_does_not_use_current_chat(plugin):
+    from unittest.mock import AsyncMock
+
+    plugin.config.update(auto_emotion=True, analysis_provider_id="")
+    generate = AsyncMock()
+    plugin.context = SimpleNamespace(llm_generate=generate)
+    await plugin.instruction(Event(), "你好")
+    generate.assert_not_called()
+
+
+def test_separate_private_group_whitelists(plugin):
+    plugin.config.update(
+        private_umo_whitelist=["bot:FriendMessage:1"], group_umo_whitelist=["bot:GroupMessage:3"]
+    )
+    assert plugin.allowed(Event())
+    assert not plugin.allowed(Event("bot:FriendMessage:2"))
+    assert plugin.allowed(Event("bot:GroupMessage:3", group="3"))
+    assert not plugin.allowed(Event("bot:GroupMessage:4", group="4"))
+
+
+@pytest.mark.asyncio
+async def test_manual_tool_tolerates_irrelevant_auto_context_argument(plugin):
+    async def forbidden(*args, **kwargs):
+        pytest.fail("manual tool must not analyze context")
+
+    plugin.instruction = forbidden
+    event = Event()
+    result = await plugin.send_voice_manual(event, "你好呀", "温柔。", context_num=6)
+    assert "成功" in result and len(event.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_speech_rate_is_per_call_and_auto_uses_view(plugin):
+    rates = []
+    plugin.config["speech_rate"] = 1.5
+
+    async def synth(config, text, instruction):
+        rates.append(config["speech_rate"])
+        return b"audio"
+
+    plugin.http.synthesize = synth
+    await plugin.send_voice_manual(Event(), "默认", "自然。")
+    await plugin.send_voice_manual(Event(), "覆盖", "自然。", speech_rate=1.3)
+    await plugin.send_voice_auto(Event(), "自动")
+    assert rates == [1.12, 1.3, 1.5]
+    assert plugin.config["speech_rate"] == 1.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rate", [0, 2.1, True, "1.12", float("nan"), float("inf")])
+async def test_invalid_manual_speech_rate_rejected(plugin, rate):
+    event = Event()
+    assert "speech_rate" in await plugin.send_voice_manual(
+        event, "你好", "自然。", speech_rate=rate
+    )
+    assert not event.sent
+
+
+@pytest.mark.asyncio
+async def test_platform_tts_uses_plugin_transport_without_mutating_provider(plugin):
+    from unittest.mock import AsyncMock
+
+    source = {
+        "type": "dashscope_tts",
+        "api_key": "platform-key",
+        "model": "cosyvoice-v3.5-plus",
+        "dashscope_tts_voice": "voice-one",
+    }
+    provider = SimpleNamespace(
+        meta=lambda: SimpleNamespace(id="tts-one"), provider_config=source, get_audio=AsyncMock()
+    )
+    plugin.context = SimpleNamespace(get_all_tts_providers=lambda: [provider])
+    plugin.config.update(
+        tts_mode="平台已配置的语音模型", tts_provider_id="tts-one", speech_rate=1.4
+    )
+    calls = []
+
+    async def synth(config, text, instruction):
+        calls.append((config, text, instruction))
+        return b"audio"
+
+    plugin.http.synthesize = synth
+    await plugin.send_voice_manual(Event(), "你好", "温柔。", speech_rate=1.25)
+    config, text, instruction = calls[0]
+    assert config["api_key"] == "platform-key" and config["voice"] == "voice-one"
+    assert config["speech_rate"] == 1.25 and instruction == "温柔。"
+    provider.get_audio.assert_not_called()
+    assert "speech_rate" not in source and plugin.config["speech_rate"] == 1.4
+    plugin.instruction = AsyncMock(return_value="轻快。")
+    await plugin.send_voice_auto(Event(), "自动")
+    assert calls[-1][0]["speech_rate"] == 1.4
+    assert calls[-1][2] == "轻快。"
+    plugin.instruction.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["external", "platform"])
+@pytest.mark.parametrize("valid", [True, False])
+async def test_voice_persona_reaches_director_without_raw_tts_append(plugin, mode, valid):
+    import json
+    from unittest.mock import AsyncMock
+
+    profile = "清亮女孩，俏皮但安慰时认真。"
+    plugin.config.update(
+        auto_emotion=True,
+        analysis_mode=mode,
+        analysis_provider_id="tone-llm",
+        voice_persona=profile,
+        fallback_instruction="自然说话。",
+    )
+    event = Event()
+    event.set_extra(
+        SNAPSHOT,
+        {
+            "history": [{"role": "user", "content": "我今天很难过"}],
+            "user": "陪我一会儿",
+            "persona": "朋友关系",
+        },
+    )
+    instruction = "像在身边轻声陪伴。" if valid else "啊" * 51
+    raw = json.dumps({"intent": "安慰", "evidence": "很难过", "instruction": instruction})
+    if mode == "external":
+        call = AsyncMock(return_value=raw)
+        plugin.http.analyze_external = call
+    else:
+        call = AsyncMock(return_value=SimpleNamespace(completion_text=raw))
+        plugin.context = SimpleNamespace(llm_generate=call)
+    result = await plugin.instruction(event, "我在这儿。")
+    assert result == (instruction if valid else "自然说话。")
+    payload = json.loads(
+        call.call_args.args[2] if mode == "external" else call.call_args.kwargs["prompt"]
+    )
+    assert payload["voice_persona"] == profile
+    assert payload["persona"] == "朋友关系"
+    assert payload["history"][0]["content"] == "我今天很难过"
+    assert payload["reply"] == "我在这儿。"
+    assert profile not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("valid", [True, False])
+async def test_temporary_analysis_debug_toggle_and_fallback(plugin, monkeypatch, enabled, valid):
+    from unittest.mock import AsyncMock, Mock
+
+    from plugin_under_test.src import director
+
+    messages = []
+    info = Mock(side_effect=lambda template, *args: messages.append(template % args))
+    monkeypatch.setattr(director.logger, "info", info)
+    plugin.config.update(
+        auto_emotion=True,
+        analysis_mode="external",
+        analysis_debug=enabled,
+        api_key="private-auth-key",
+        analysis_api_key="private-analysis-key",
+        analysis_headers='{"Authorization":"private-header"}',
+    )
+    plugin.http.analyze_external = AsyncMock(
+        return_value='{"instruction":"温柔聊天。"}' if valid else "bad json"
+    )
+    event = Event()
+    event.set_extra(SNAPSHOT, {"user": "测试上下文"})
+    result = await plugin.instruction(event, "我在这里。")
+    if enabled:
+        logs = "\n".join(messages)
+        assert director.DIRECTOR_PROMPT in logs
+        assert "测试上下文" in logs and "我在这里。" in logs and result in logs
+        assert not any(
+            secret in logs
+            for secret in ("private-auth-key", "private-analysis-key", "private-header")
+        )
+    else:
+        info.assert_not_called()

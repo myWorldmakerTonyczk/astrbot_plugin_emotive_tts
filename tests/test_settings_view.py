@@ -19,11 +19,11 @@ def view():
     return module.SettingsView(SimpleNamespace(config=config, closing=False, gate=WorkGate()))
 
 
-def test_only_api_visible_and_secrets_masked(view):
+def test_all_settings_hidden_in_legacy_form_and_secrets_masked(view):
     schema = json.loads(
         (module.SCHEMA_PATH.parents[2] / "_conf_schema.json").read_text(encoding="utf-8")
     )
-    assert [k for k, v in schema.items() if not v.get("invisible")] == ["tts_mode"]
+    assert [k for k, v in schema.items() if not v.get("invisible")] == []
     result = module.settings_payload(view.plugin.config)
     assert result["values"]["api_key"] == "" and result["configured"]["api_key"]
     assert "private-key" not in json.dumps(result)
@@ -70,7 +70,7 @@ async def test_clear_secret_and_apply_queue(view, monkeypatch):
     [
         {"speech_rate": 99},
         {"context_messages": True},
-        {"tts_mode": "阿里云"},
+        {"tts_mode": "invalid"},
         {"tts_headers": "bad"},
         {"tts_endpoint": "http://localhost"},
         {"fallback_instruction": ""},
@@ -100,3 +100,44 @@ async def test_save_failure_restores_running_settings(view, monkeypatch):
     )
     assert (await view.save()).status_code == 500
     assert dict(view.plugin.config) == before
+
+
+@pytest.mark.asyncio
+async def test_api_mode_can_be_saved_in_view(view, monkeypatch):
+    body = {
+        "revision": module.revision(view.plugin.config),
+        "changes": {"tts_mode": "自定义兼容接口"},
+    }
+    monkeypatch.setattr(module, "request", SimpleNamespace(json=AsyncMock(return_value=body)))
+    assert (await view.save()).status_code == 200
+    assert view.plugin.config.saved["tts_mode"] == "自定义兼容接口"
+    assert view.plugin.config.saved["api_key"] == "private-key"
+
+
+def test_provider_dropdown_uses_platform_chat_models_without_credentials(view):
+    view.plugin.context = SimpleNamespace(
+        get_all_providers=lambda: [
+            SimpleNamespace(meta=lambda: SimpleNamespace(id="tone-llm", model="qwen-plus"))
+        ]
+    )
+    payload = view.payload()
+    field = payload["schema"]["analysis_provider_id"]
+    assert field["options"] == ["", "tone-llm"]
+    assert "qwen-plus" in field["labels"][1]
+    assert "private-key" not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_voice_persona_save_reload_and_clear(view, monkeypatch):
+    profile = "清亮女孩，自然聊天。"
+    for value in (profile, ""):
+        body = {
+            "revision": module.revision(view.plugin.config),
+            "changes": {"voice_persona": value},
+        }
+        monkeypatch.setattr(module, "request", SimpleNamespace(json=AsyncMock(return_value=body)))
+        assert (await view.save()).status_code == 200
+        assert view.plugin.config.saved["voice_persona"] == value
+        assert view.payload()["values"]["voice_persona"] == value
+    with pytest.raises(ValueError, match="2000"):
+        module.validate_changes({"voice_persona": "啊" * 2001})

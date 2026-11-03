@@ -1,8 +1,10 @@
 name: astrbot_plugin_emotive_tts
 display_name: 上下文情绪语音
 author: EmotiveTTS
-version: 0.2.0
+version: 0.4.2
 desc: 根据最近对话生成具体情绪转折指令，调用阿里云整段语音合成。默认1.12倍语速。
 astrbot_version: ">=4.29.3"
 support_platforms:
   - aiocqhttp
+
+repo: https://github.com/myWorldmakerTonyczk/astrbot_plugin_emotive_tts

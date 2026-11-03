@@ -26,17 +26,26 @@
     "default": "阿里云",
     "options": [
       "阿里云",
-      "自定义兼容接口"
+      "自定义兼容接口",
+      "平台已配置的语音模型"
     ],
-    "hint": "其余设置请打开插件详情中的「语音设置」视图。"
+    "hint": "所有设置请打开插件详情中的「语音设置」视图。",
+    "invisible": true,
+    "required": true
   },
   "api_key": {
     "description": "语音API Key",
     "type": "string",
     "default": "",
-    "hint": "阿里模式填百炼Key；自定义模式填兼容服务Key，或通过额外请求头提供鉴权。",
+    "hint": "填写百炼或兼容服务Key；也可通过环境变量DASHSCOPE_API_KEY（阿里模式）或额外请求头提供鉴权，因此此输入框可留空。",
     "secret": true,
-    "invisible": true
+    "invisible": true,
+    "condition": {
+      "tts_mode": [
+        "阿里云",
+        "自定义兼容接口"
+      ]
+    }
   },
   "aliyun_region": {
     "description": "阿里云地区",
@@ -48,9 +57,13 @@
     ],
     "hint": "cosyvoice-v3.5-plus请用北京；Key、模型和音色须属于同一地域。",
     "condition": {
-      "tts_mode": "阿里云"
+      "tts_mode": [
+        "阿里云",
+        "平台已配置的语音模型"
+      ]
     },
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "aliyun_workspace": {
     "description": "阿里业务空间ID（可选）",
@@ -71,7 +84,8 @@
     "condition": {
       "tts_mode": "自定义兼容接口"
     },
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "tts_headers": {
     "description": "自定义请求头（JSON）",
@@ -88,21 +102,36 @@
     "type": "string",
     "default": "cosyvoice-v3.5-plus",
     "hint": "首版使用支持自然语言instruction的模型和匹配音色。",
-    "invisible": true
+    "invisible": true,
+    "condition": {
+      "tts_mode": [
+        "阿里云",
+        "自定义兼容接口"
+      ]
+    },
+    "required": true
   },
   "voice": {
     "description": "语音音色ID",
     "type": "string",
     "default": "",
     "hint": "必须填写与模型、地域匹配的复刻或设计音色。",
-    "invisible": true
+    "invisible": true,
+    "condition": {
+      "tts_mode": [
+        "阿里云",
+        "自定义兼容接口"
+      ]
+    },
+    "required": true
   },
   "speech_rate": {
     "description": "语速",
     "type": "float",
     "default": 1.12,
-    "hint": "试听选定默认值；阿里接口有效范围以模型为准。",
-    "invisible": true
+    "hint": "建议保持1.12，最好不要改；较快的语速有助于减少机器感。自动工具使用此值，手动工具使用本次参数（默认1.12）。平台配置复用模式同样有效。",
+    "invisible": true,
+    "required": true
   },
   "auto_emotion": {
     "description": "根据上下文生成语气",
@@ -116,13 +145,14 @@
     "type": "int",
     "default": 5,
     "hint": "0至50；5是5条，不是5轮；当前输入和当前回复另传。",
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
-  "voice_style": {
-    "description": "固定声音风格",
+  "voice_persona": {
+    "description": "语音人设",
     "type": "text",
-    "default": "自然灵动，保持音色一致，避免播音腔和刻意卖萌。",
-    "hint": "",
+    "default": "清亮轻巧的女孩声线，声音靠前、轻松柔软，保持音色和性别感一致。像和熟悉的人随口聊天，自然灵动，有一点俏皮和小机灵，但不刻意装嫩、卖萌或夹嗓子。嘴硬心软，玩笑和小埋怨里可以藏着笑意；安慰人时收起玩笑，温柔认真；解释事情时轻松清楚。着急或心虚时可以有自然的语气变化，但不变成粗重喊叫。情绪跟随上下文，不是每句话都傲娇或兴奋。停顿自然，句尾自然收住，避免念稿、播音腔和夸张表演。",
+    "hint": "填写声音特点和说话习惯，最多2000字。例如：清亮轻巧的女孩声线，自然灵动，嘴硬心软，安慰人时温柔认真。自动语气分析会结合上文提炼成短指令，不会将整段人设附加给语音模型；留空不额外指定，手动工具不使用。",
     "invisible": true
   },
   "fallback_instruction": {
@@ -130,7 +160,8 @@
     "type": "text",
     "default": "用普通话，自然聊天，语气贴合内容，情绪克制，停顿短。",
     "hint": "自动分析失败或关闭时使用；最多100加权字符。",
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "analysis_mode": {
     "description": "语气判断模型（与语音API分开）",
@@ -141,17 +172,20 @@
       "使用AstrBot模型",
       "自定义分析接口"
     ],
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "analysis_provider_id": {
-    "description": "AstrBot分析模型提供商ID",
+    "description": "语气分析用的聊天模型",
     "type": "string",
     "default": "",
-    "hint": "留空使用当前会话模型；不会重写正常聊天回复。",
+    "hint": "从平台已配置的聊天模型中选择，复用其API配置；未选择时使用默认语气，不跟随当前会话。",
     "condition": {
       "analysis_mode": "使用AstrBot模型"
     },
-    "invisible": true
+    "invisible": true,
+    "_special": "select_provider",
+    "required": true
   },
   "analysis_endpoint": {
     "description": "外部分析完整URL",
@@ -161,7 +195,8 @@
     "condition": {
       "analysis_mode": "自定义分析接口"
     },
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "analysis_model": {
     "description": "外部分析模型名称",
@@ -171,13 +206,14 @@
     "condition": {
       "analysis_mode": "自定义分析接口"
     },
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "analysis_api_key": {
     "description": "外部分析API Key",
     "type": "string",
     "default": "",
-    "hint": "",
+    "hint": "需要鉴权的接口须填写Key，也可通过分析额外请求头提供Authorization；使用请求头鉴权时此框可留空。",
     "condition": {
       "analysis_mode": "自定义分析接口"
     },
@@ -200,7 +236,8 @@
     "default": 4000,
     "hint": "",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "include_persona": {
     "description": "分析时附带有限角色背景",
@@ -216,7 +253,8 @@
     "default": 12,
     "hint": "",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "tts_timeout": {
     "description": "合成与下载总超时秒",
@@ -224,7 +262,8 @@
     "default": 30,
     "hint": "",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "job_timeout": {
     "description": "含排队的任务总超时秒",
@@ -232,14 +271,16 @@
     "default": 75,
     "hint": "",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "max_text_chars": {
     "description": "单次朗读字符上限",
     "type": "int",
     "default": 600,
     "hint": "超限保留文字，不强行分句。",
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "private_enabled": {
     "description": "私聊启用",
@@ -267,7 +308,13 @@
     "type": "float",
     "default": 1.0,
     "hint": "0至1。",
-    "invisible": true
+    "invisible": true,
+    "slider": {
+      "min": 0,
+      "max": 1,
+      "step": 0.01
+    },
+    "required": true
   },
   "send_text_with_voice": {
     "description": "语音后仍发送原文字",
@@ -282,7 +329,8 @@
     "default": 2,
     "hint": "",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "queue_capacity": {
     "description": "最大等待及运行任务数",
@@ -290,7 +338,8 @@
     "default": 16,
     "hint": "",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "audio_ttl_seconds": {
     "description": "临时音频保留秒",
@@ -298,12 +347,59 @@
     "default": 3600,
     "hint": "最少300秒，便于平台读取文件。",
     "collapsed": true,
-    "invisible": true
+    "invisible": true,
+    "required": true
   },
   "config_revision": {
     "type": "int",
     "description": "配置版本（自动维护）",
     "default": 0,
+    "invisible": true
+  },
+  "private_umo_whitelist": {
+    "description": "私聊会话UMO白名单",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个完整私聊UMO（如 default:FriendMessage:123456）。留空不限制该类会话，仍需开启私聊。",
+    "invisible": true
+  },
+  "group_umo_whitelist": {
+    "description": "群聊会话UMO白名单",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个完整群聊UMO（如 default:GroupMessage:123456）。留空不限制该类会话，仍需开启群聊。",
+    "invisible": true
+  },
+  "whitelist_revision": {
+    "description": "白名单迁移版本",
+    "type": "int",
+    "default": 0,
+    "invisible": true
+  },
+  "tts_provider_id": {
+    "description": "平台语音模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider_tts",
+    "condition": {
+      "tts_mode": "平台已配置的语音模型"
+    },
+    "hint": "复用所选阿里语音提供商的Key、模型、音色、地址和请求头，实际合成由本插件完成，支持动态语气和单次语速。不修改平台配置；暂不支持其他厂商协议。",
+    "invisible": true,
+    "required": true
+  },
+  "analysis_debug": {
+    "description": "临时打印语气分析日志",
+    "type": "bool",
+    "default": true,
+    "hint": "打印发送给语气LLM的系统提示词、上下文和正文、LLM返回及最终instruction。日志包含聊天内容；调试结束可关闭，不打印API Key、请求头或连接配置。",
+    "invisible": true
+  },
+  "tts_seed": {
+    "description": "正式语音种子",
+    "type": "int",
+    "default": -1,
+    "hint": "-1不主动传种子，使用服务默认；固定种子范围0至65535。可到“种子试听”跨五种语境比较后确认。种子数值不是质量分数，越大不代表越好。",
     "invisible": true
   }
 }

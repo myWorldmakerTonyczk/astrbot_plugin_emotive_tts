@@ -13,7 +13,7 @@
 - `src/queue_manager.py`：有限并发和同会话串行队列。
 - `src/events.py`：当前消息上的状态键，避免把不同会话的状态存进共享变量。
 
-`src/view/settings.py`提供视图设置API；`views/settings/`存放由AstrBot扫描的HTML/CSS/JS与表单声明。根Schema保留隐藏字段以维护默认值与迁移，只有tts_mode显示在插件配置里。新增参数时同步更新两个Schema及视图分组。视图仅通过官方bridge读写设置，不直接访问管理面板凭据。
+`src/view/settings.py`提供视图设置API；`views/settings/`存放由AstrBot扫描的HTML/CSS/JS与表单声明。根Schema保留隐藏字段以维护默认值与迁移，所有字段均隐藏于插件配置，统一在视图里编辑。新增参数时同步更新两个Schema及视图分组。视图仅通过官方bridge读写设置，不直接访问管理面板凭据。
 
 ## 编写约定
 

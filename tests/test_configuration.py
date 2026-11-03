@@ -50,8 +50,30 @@ def test_old_config_migrates_once_and_preserves_choices():
 
 def test_schema_dropdown_and_visibility():
     schema = json.loads((Path(__file__).parents[1] / "_conf_schema.json").read_text())
-    assert schema["tts_mode"]["options"] == [ALIYUN, CUSTOM]
+    assert schema["tts_mode"]["options"] == [ALIYUN, CUSTOM, "平台已配置的语音模型"]
     assert schema["tts_headers"]["condition"] == {"tts_mode": CUSTOM}
     assert schema["tts_endpoint"]["condition"] == {"tts_mode": CUSTOM}
-    assert schema["aliyun_region"]["condition"] == {"tts_mode": ALIYUN}
+    assert schema["aliyun_region"]["condition"] == {"tts_mode": [ALIYUN, "平台已配置的语音模型"]}
     assert schema["analysis_endpoint"]["condition"] == {"analysis_mode": "自定义分析接口"}
+
+
+def test_whitelist_migration_preserves_scope_restrictions():
+    from plugin_under_test.src.configuration import migrate_whitelists
+
+    config = {"umo_whitelist": ["bot:FriendMessage:1"]}
+    assert migrate_whitelists(config)
+    assert config["private_umo_whitelist"] == ["bot:FriendMessage:1"]
+    assert config["group_enabled"] is False
+    assert not migrate_whitelists(config)
+
+
+def test_removed_style_migrates_into_persona_once():
+    from plugin_under_test.src.configuration import migrate_voice_style
+
+    config = {"voice_style": "轻声自然", "voice_persona": "女孩声线"}
+    assert migrate_voice_style(config)
+    assert config == {"voice_persona": "女孩声线\n轻声自然"}
+    assert not migrate_voice_style(config)
+    duplicate = {"voice_style": "自然", "voice_persona": "自然女孩声"}
+    migrate_voice_style(duplicate)
+    assert duplicate == {"voice_persona": "自然女孩声"}

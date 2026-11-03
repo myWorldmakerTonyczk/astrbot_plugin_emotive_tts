@@ -16,9 +16,10 @@ from ..queue_manager import WorkGate
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "views/settings/schema.json"
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 SECRETS = {"api_key", "analysis_api_key", "tts_headers", "analysis_headers"}
-EDITABLE = set(SCHEMA) - {"tts_mode", "config_revision"}
+EDITABLE = set(SCHEMA) - {"config_revision", "whitelist_revision", "umo_whitelist"}
 LIMITS = {
     "speech_rate": (0.5, 2),
+    "tts_seed": (-1, 65535),
     "trigger_probability": (0, 1),
     "context_messages": (0, 50),
     "context_max_chars": (0, 20000),
@@ -42,12 +43,17 @@ def settings_payload(config) -> dict:
     configured = {key: bool(values[key] and values[key] != "{}") for key in SECRETS}
     for key in SECRETS:
         values[key] = ""
-    values.pop("config_revision", None)
+    for key in ("config_revision", "whitelist_revision", "umo_whitelist"):
+        values.pop(key, None)
     return {
         "values": values,
         "configured": configured,
         "revision": revision(config),
-        "schema": {key: item for key, item in SCHEMA.items() if key != "config_revision"},
+        "schema": {
+            key: item
+            for key, item in SCHEMA.items()
+            if key not in {"config_revision", "whitelist_revision", "umo_whitelist"}
+        },
     }
 
 
@@ -72,6 +78,13 @@ def validate_changes(changes: dict) -> dict:
             or any(not isinstance(v, str) or len(v) > 500 for v in value)
         ):
             raise ValueError("白名单格式错误，请每行填写一个完整UMO。")
+        if key in ("private_umo_whitelist", "group_umo_whitelist"):
+            kind = "FriendMessage" if key.startswith("private") else "GroupMessage"
+            if any(
+                len(umo.split(":")) != 3 or umo.split(":")[1] != kind or not all(umo.split(":"))
+                for umo in value
+            ):
+                raise ValueError(f"{item['description']}请填写完整的{kind}类型UMO。")
         if "options" in item and value not in item["options"]:
             raise ValueError(f"{item['description']}选项无效。")
         if key in LIMITS and not LIMITS[key][0] <= value <= LIMITS[key][1]:
@@ -89,6 +102,8 @@ def validate_changes(changes: dict) -> dict:
                 validate_url(value)
             except (ValueError, RuntimeError):
                 raise ValueError("接口地址必须是公开的HTTPS地址。") from None
+        if key == "voice_persona" and len(value) > 2000:
+            raise ValueError("语音人设最多2000字，请只保留声音特点和说话习惯。")
         if key == "fallback_instruction":
             try:
                 value = validate_instruction(value)
@@ -108,11 +123,47 @@ class SettingsView:
         prefix = "/astrbot_plugin_emotive_tts/settings"
         context.register_web_api(prefix, self.get, ["GET"], "读取语音设置")
         context.register_web_api(prefix + "/save", self.save, ["POST"], "保存语音设置")
+        from .seed_preview import SeedPreviewView
+
+        self.seed_preview = SeedPreviewView(self, SCHEMA, revision)
+        self.seed_preview.register()
+
+    def payload(self):
+        result = settings_payload(self.plugin.config)
+        providers = []
+        context = getattr(self.plugin, "context", None)
+        if context is not None and hasattr(context, "get_all_providers"):
+            for provider in context.get_all_providers():
+                meta = provider.meta()
+                providers.append((meta.id, f"{meta.id} · {meta.model}"))
+        field = result["schema"]["analysis_provider_id"] = dict(
+            result["schema"]["analysis_provider_id"]
+        )
+        field["options"] = [""] + [item[0] for item in providers]
+        field["labels"] = ["请选择已配置的聊天模型"] + [item[1] for item in providers]
+        selected = self.plugin.config.get("analysis_provider_id", "")
+        if selected and selected not in field["options"]:
+            field["options"].append(selected)
+            field["labels"].append(selected + "（当前不可用，请重新选择）")
+        field = result["schema"]["tts_provider_id"] = dict(result["schema"]["tts_provider_id"])
+        available = (
+            context.get_all_tts_providers()
+            if context is not None and hasattr(context, "get_all_tts_providers")
+            else []
+        )
+        models = [(p.meta().id, p.meta().model) for p in available]
+        field["options"] = [""] + [item[0] for item in models]
+        field["labels"] = ["请选择已配置的语音模型"] + [
+            f"{id} · {model or 'TTS'}" for id, model in models
+        ]
+        selected = self.plugin.config.get("tts_provider_id", "")
+        if selected and selected not in field["options"]:
+            field["options"].append(selected)
+            field["labels"].append(selected + "（当前不可用）")
+        return result
 
     async def get(self):
-        return json_response(
-            settings_payload(self.plugin.config), headers={"Cache-Control": "no-store"}
-        )
+        return json_response(self.payload(), headers={"Cache-Control": "no-store"})
 
     async def save(self):
         body = await request.json(default=None)
@@ -156,6 +207,4 @@ class SettingsView:
                 plugin.gate = WorkGate(
                     plugin.config.get("concurrency", 2), plugin.config.get("queue_capacity", 16)
                 )
-            return json_response(
-                settings_payload(plugin.config), headers={"Cache-Control": "no-store"}
-            )
+            return json_response(self.payload(), headers={"Cache-Control": "no-store"})
